@@ -1,0 +1,128 @@
+#include "com_app.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/socket.h>
+#include <linux/netlink.h>
+#include <string.h>
+#define NETLINK_USER 31
+#define MAX_PAYLOAD 1024
+
+struct sockaddr_nl src_addr; // source address
+struct sockaddr_nl dest_addr; // destination address
+struct nlmsghdr *nlh = NULL;
+struct iovec iov;
+struct msghdr msg;
+
+int sock_fd;
+
+void send_msg(int,int, char*);
+
+int main(int argc,char *argv[])
+{
+    int user_id = atoi(argv[1]);
+    char _id [10];
+    char mes[300];
+    char str[256];
+    char buffer[4096];
+    // id = argv[1]
+    strcpy(_id,argv[1]);
+    if(argc==3 && ((strcmp(argv[2],"queued")==0)||(strcmp(argv[2],"unqueued")==0)))
+    {
+        strcpy(buffer,"Registration.id=0000");
+        strncpy(&buffer[(20-strlen(_id))],_id,strlen(_id)); // make form tidy
+        strcat(buffer,",type=");
+        strcat(buffer,argv[2]);
+
+        sock_fd = socket(PF_NETLINK, SOCK_RAW, NETLINK_USER);
+        // send <id> <buffer>
+        send_msg(user_id,0,buffer);
+
+        // if registration fail , terminate program
+        if(strcmp(NLMSG_DATA(nlh),"Fail")==0)
+        {
+            return 0;
+        }
+
+        // if registration success
+        while(1)
+        {
+            scanf("%s",mes);
+
+            // Send
+            if(strcmp(mes,"Send")==0)
+            {
+                strcat(mes,".id=0000");
+                scanf("%s",_id);
+                strncpy(&mes[12-strlen(_id)],_id,strlen(_id));
+                strcat(mes,",str=");
+
+                scanf("%255[^\n]s",str);
+                if(scanf("%[^\n]s",buffer))
+                {
+                    printf("text too long \n");
+                    continue;
+                }
+                strncat(mes,&str[1],256);
+                send_msg(user_id,0,mes);
+            }
+            // Recv
+            else if(strcmp(mes,"Recv")==0)
+            {
+                strcat(mes,".id=0000");
+                strncpy(&mes[12-strlen(_id)],_id,strlen(_id));
+                send_msg(user_id,0,mes);
+            }
+            else
+            {
+                printf("error, input Send or Recv \n");
+            }
+        }
+    }
+    else
+    {
+        printf("format error\n");
+    }
+    close(sock_fd);
+    return 0;
+}
+
+void send_msg(int user_id,int to_id, char *message)
+{
+    // source address
+    memset(&src_addr, 0, sizeof(src_addr));
+    src_addr.nl_family = AF_NETLINK;
+    src_addr.nl_pid = getpid();
+
+    bind(sock_fd, (struct sockaddr *)&src_addr, sizeof(src_addr));
+
+    // destination address
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.nl_family = AF_NETLINK;
+    dest_addr.nl_pid = 0;
+    dest_addr.nl_groups = 0;
+
+    // netlink
+    nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PAYLOAD));
+    memset(nlh, 0, NLMSG_SPACE(MAX_PAYLOAD));
+    nlh->nlmsg_len = NLMSG_SPACE(MAX_PAYLOAD);
+    nlh->nlmsg_pid = getpid();
+    nlh->nlmsg_flags = 0;
+
+    char input[300] = "" ;
+    memset(input, 0, strlen(input));
+    strcat(input,message);
+    strcpy(NLMSG_DATA(nlh), input);
+
+    iov.iov_base = (void *)nlh;
+    iov.iov_len = nlh->nlmsg_len;
+
+    msg.msg_name = (void *)&dest_addr;
+    msg.msg_namelen = sizeof(dest_addr);
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+
+    sendmsg(sock_fd,&msg,0);
+    memset(nlh,0,NLMSG_SPACE(MAX_PAYLOAD));
+    recvmsg(sock_fd, &msg, 0);
+    printf("%s\n",NLMSG_DATA(nlh));
+}
